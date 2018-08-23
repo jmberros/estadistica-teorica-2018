@@ -1,0 +1,119 @@
+---
+title: "Distribución Beta"
+author: "Berros & Duarte & Rognon"
+date: "August 23, 2018"
+output: html_document
+runtime: shiny
+---
+
+```{r setup, include = T}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(shiny)
+library(glue)
+
+a_b_range <- 1:15
+
+densidades <-
+  cross_df(list(
+    "x" = seq(0, 1, .001),
+    "a" = a_b_range,
+    "b" = a_b_range
+  )) %>%
+  mutate(
+    densidad = pmap_dbl(list(x, a, b), ~dbeta(..1, ..2, ..3)),
+    esperanza = a/(a+b))
+
+plot_densities <- function(chosen_a) {
+  densidades %>%
+  filter(a == chosen_a) %>%
+  ggplot() +
+  aes(x = x, y = densidad, color = as.factor(b)) +
+  geom_line() +
+  labs(title = glue("Densidades de la distribución beta para a = {chosen_a}"))
+}
+
+```
+
+## Distribución al modificar los parámetros $a$ y $b$
+
+```{r beta_dist, echo=FALSE}
+inputPanel(
+  sliderInput("a", label = "a:", min = min(a_b_range), max = max(a_b_range),
+              value = 1, step = 1, width = 600)
+)
+
+renderPlot({
+  plot_densities(input$a)
+}, height = 600)
+```
+
+## Estimación de los parámetros $a$ y $b$
+
+### Método de los momentos
+
+```{r, include = T}
+bdist_estimar_a <- function(X, b) {
+  # Por método de los momentos, primer momento
+  return (b / (1/mean(X) - 1))
+}
+
+bdist_estimar_b <- function(X, a) {
+  # Por método de los momentos, primer momento
+  return (a/mean(X) - a)
+}
+
+bdist_estimar_a_b <- function(X) {
+  X_barra <- mean(X)
+  S2 <- sum((X - X_barra)^2)/length(X)
+  a_hat <- X_barra * (((X_barra * (1 - X_barra)) / S2) - 1)
+  b_hat <- a_hat * (1/X_barra - 1)
+  return (list("a" = a_hat, "b" = b_hat))
+}
+
+df <-
+  cross_df(list(
+    "N" = seq(25, 1e4, 25),
+    "a" = a_b_range,
+    "b" = a_b_range
+  )) %>%
+  mutate(
+    X_muestra = pmap(list(N, a, b), ~rbeta(..1, ..2, ..3)),
+    a_MOM_1 = map2_dbl(X_muestra, b, bdist_estimar_a),
+    b_MOM_1 = map2_dbl(X_muestra, a, bdist_estimar_b),
+    ab_MOM_2 = map(X_muestra, bdist_estimar_a_b),
+    a_MOM_2 = map_dbl(ab_MOM_2, ~.[["a"]]),
+    b_MOM_2 = map_dbl(ab_MOM_2, ~.[["b"]])
+  ) %>%
+  select(-ab_MOM_2)
+
+resultado <- df %>%
+  select(-contains("error")) %>%
+  gather(key = "name", value = "value", -N, -a, -b, -X_muestra)
+```
+
+```{r beta_estimation, echo = F}
+plot_estimation <- function(a_, b_, shape) {
+  resultado %>%
+    filter(a == a_, b == b_) %>%
+    ggplot() +
+    geom_hline(yintercept = a_, linetype = "dashed") +
+    geom_hline(yintercept = b_, linetype = "dashed") +
+    aes(x = N, y = value, color = name) +
+    geom_point(shape = shape)
+}
+
+inputPanel(
+  sliderInput("a", label = "a:", min = min(a_b_range), max = max(a_b_range),
+              value = 1, step = 1),
+  sliderInput("b", label = "b:", min = min(a_b_range), max = max(a_b_range),
+              value = 1, step = 1),
+  sliderInput("shape", label = "shape:", min = 1, max = 20, value = 1, step = 1)
+)
+
+renderPlot({
+  plot_estimation(input$a, input$b, shape = input$shape)
+}, height = 600)
+
+```
