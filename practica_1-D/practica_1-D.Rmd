@@ -1,0 +1,182 @@
+---
+title: "Práctica 1-D"
+author: "Berros & Duarte & Rognon"
+date: "September 2, 2018"
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Cargamos algunas librerías útiles:
+
+```{r echo=T, warnings=F, errors=F, messages=F}
+library("tidyverse")
+library("here")
+library("glue")
+```
+
+Consignas:
+
+> Generar n = 100 muestras de una variable aleatoria ε(λ) con λ = 1 y graficar su
+  distribución empı́rica junto con la función de distribución acumulada.
+
+> Para las 100 muestras obtenidas en la parte a), calcular el estimador de λ por el
+  método de los momentos y por máxima verosimilitud.
+
+> Proponer un estimador de la función de distribución acumulada distinto al obtenido
+  en a) y graficarlo en el gráfico anterior. Qué observa? Mejora su propuesta la
+  estimación dada en a)?
+
+> Qué pasarı́a con las estimaciones anteriores si tuviéramos otro tamaño de muestra?
+  Repita los puntos anteriores con n = 10 y n = 1000.
+
+Generamos muestras aleatorias de una población con distribución exponencial,
+para diferentes valores de $n$ entre $10$ y $10000$ (cada $10$).
+
+```{r cache=T}
+simular <- function(tasa, n_) {
+  df <-
+    tibble(
+      x = rexp(n_, rate = tasa),
+      acumulada = pexp(x, rate = tasa)) %>%
+    arrange(x) %>%
+    rowid_to_column("i") %>%
+    mutate(empirica = i / n_)
+  
+  ## Usé esto para comprobar que mi modo de calcular la distro empírica
+  ## coincidía con el de R:
+  # distribucion_empirica <- ecdf(df$x)
+  # df <- mutate(df, empirica_R = map_dbl(x, distribucion_empirica))
+  
+  return (list(
+    df = df,
+    df_tidy = gather(df, key = "tipo", value = "probabilidad", -x, -i),
+    muestra = df$x
+  ))
+}
+
+TASA <- 1
+simulaciones <- tibble(
+  n_ = seq(10, 10e3, by = 10),
+  simulacion = map(n_, ~simular(tasa = TASA, n_ = .)),
+  muestra = map(simulacion, "muestra")
+)
+```
+
+Graficamos la distribución empírica con $n \in \{10, 100, 1000\}$, junto a la
+función de distribución acumulada $\varepsilon(1)$:
+
+```{r}
+# Helper
+extraer_simulacion <- function(n_elegido) {
+  filter(simulaciones, n_ == n_elegido)[[1, "simulacion"]]
+}
+```
+
+
+```{r results=F, cache=T}
+graficar_simulacion <- function(n_elegido) {
+  simulacion <- extraer_simulacion(n_elegido)
+  fig <-
+    simulacion$df_tidy %>%
+    ggplot() +
+    aes(x = x, y = probabilidad, color = tipo) +
+    geom_line() +
+    geom_point(alpha = .9) +
+    labs(title = paste(glue("Distribución empírica(λ = {TASA}, n = {n_elegido})"),
+                       glue("vs. FDA ε({TASA})"),
+                       sep = " "))
+  return (fig)
+}
+
+for (n_ in c(10, 100, 1000)) {
+  fig <- graficar_simulacion(n_elegido = n_)
+  ggsave(filename = here(glue("n{n_}_distribucion_empirica_vs_CDF.png")), fig)
+  print(fig)  
+}
+
+```
+
+Estimamos $\lambda$ usando el método de los momentos y el estimador de máxima
+verosimilitud con las muestras del punto anterior.
+
+```{r cache=T}
+exp_estimador_momentos_1 <- function(X) {
+  return (1/mean(X))
+}
+
+exp_estimador_momentos_2 <- function(X) {
+  return (sqrt(2/mean(X^2)))
+}
+
+exp_estimador_maxver <- function(X) {
+  return (1/mean(X)) # Obs: coincide con el EMOM-1
+}
+
+simulaciones <-
+  simulaciones %>%
+  mutate(
+    emom1 = map_dbl(muestra, exp_estimador_momentos_1),
+    emom2 = map_dbl(muestra, exp_estimador_momentos_2),
+    emv = map_dbl(muestra, exp_estimador_maxver))
+```
+
+```{r echo = F}
+# Helper
+extraer_estimador <- function(n_elegido, tipo, precision = 3) {
+  estimador <- (filter(simulaciones, n_ == n_elegido)[[1, tipo]])
+  return (round(estimador, precision))
+}
+```
+
+Estimadores obtenidos para $n = 10$:
+
+- $\theta_{MOM1}$ = `r extraer_estimador(10, "emom1")`
+- $\theta_{MOM2}$ = `r extraer_estimador(10, "emom2")`
+- $\theta_{EMV}$ = `r extraer_estimador(10, "emv")`
+
+Estimadores obtenidos para $n = 100$:
+
+- $\theta_{MOM1}$ = `r extraer_estimador(100, "emom1")`
+- $\theta_{MOM2}$ = `r extraer_estimador(100, "emom2")`
+- $\theta_{EMV}$ = `r extraer_estimador(100, "emv")`
+
+Estimadores obtenidos para $n = 1000$:
+
+- $\theta_{MOM1}$ = `r extraer_estimador(1000, "emom1")`
+- $\theta_{MOM2}$ = `r extraer_estimador(1000, "emom2")`
+- $\theta_{EMV}$ = `r extraer_estimador(1000, "emv")`
+
+Observación: El EMV coincide con el estimador basado en el primer momento.
+
+Nota: calculamos los estimadores no sólo para $n \in {10, 100, 1000}$, sino
+para todos los valores en $[10, 1000]$ cada $10$. A continuación graficamos
+estos estimadores en función del tamaño muestral $n$.
+
+```{r}
+simulaciones %>%
+  select(-simulacion, -muestra) %>%
+  gather(key = "estimador", value = "tasa", -n_) %>%
+  ggplot() +
+  aes(x = n_, y = tasa, color = estimador) +
+  geom_point(shape = 4, alpha = .8) +
+  geom_hline(yintercept = 1, linetype = 3) +
+  labs(
+    title = "Influencia del tamaño muestral sobre la estimación del parámetro λ",
+    x = "Tamaño muestral (n)",
+    y = "Tasa"
+  ) +
+  guides(color = guide_legend(override.aes = list(alpha = 1)))
+```
+
+Nota: EMV y EMOM1 se pisan siempre, de modo que aparecen como crucecitas color
+violeta en el gráfico.
+
+Puede apreciarse que los estimadores se acercan al parámetro poblacional ($1$)
+a medida que la muestra se hace más grande.
